@@ -34,8 +34,8 @@ class FasterRCNN(nn.Module):
                                       FastRCNN_config['iou_positive_thresh'], 
                                       FastRCNN_config['iou_negative_high'], FastRCNN_config['iou_negative_low'],
                                       FastRCNN_config['batch_size_per_image'], FastRCNN_config['positive_fraction'],
-                                      FastRCNN_config['nms_thresh'], FastRCNN_config['score_thresh'],
-                                      FastRCNN_config['detections_per_img'])
+                                      FastRCNN_config['min_size'], FastRCNN_config['nms_thresh'], 
+                                      FastRCNN_config['score_thresh'], FastRCNN_config['top_n'])
         return FastRCNN
         
     def build_RPN(self, RPN_config, gpu_id):
@@ -47,7 +47,8 @@ class FasterRCNN(nn.Module):
                                         RPN_config['iou_positive_thresh'], 
                                         RPN_config['iou_negative_high'], RPN_config['iou_negative_low'],
                                         RPN_config['batch_size_per_image'], RPN_config['positive_fraction'], 
-                                        RPN_config['nms_thresh'], RPN_config['top_n_train'], RPN_config['top_n_test'])
+                                        RPN_config['min_size'], RPN_config['nms_thresh'], 
+                                        RPN_config['top_n_train'], RPN_config['top_n_test'])
         return RPN
 
     def forward(self, images, gt_labels=None, gt_bboxs=None):
