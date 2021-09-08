@@ -82,7 +82,8 @@ class RegionProposalNetwork(nn.Module):
                  bbox_reg_weights, 
                  iou_positive_thresh, iou_negative_high, iou_negative_low,
                  batch_size_per_image, positive_fraction,
-                 nms_thresh, top_n_train, top_n_test):
+                 min_size, nms_thresh, 
+                 top_n_train, top_n_test):
         super(RegionProposalNetwork, self).__init__()
         self.anchor_generator = anchor_generator
         self.rpn_head = rpn_head
@@ -91,10 +92,10 @@ class RegionProposalNetwork(nn.Module):
         self.proposal_matcher = utils.Matcher(iou_positive_thresh, iou_negative_high, iou_negative_low, low_quality_match=True)
         self.sampler = utils.Balanced_Sampler(batch_size_per_image, positive_fraction)
         
+        self.min_size = min_size
         self.nms_thresh = nms_thresh
         self.top_n_train = top_n_train
         self.top_n_test = top_n_test
-        self.min_size = 0.01
 
     def assign_gt_to_anchors(self, anchors, gt_labels, gt_bboxs):
         labels, matched_gt_bboxs = [], []
@@ -146,7 +147,7 @@ class RegionProposalNetwork(nn.Module):
     
     def filter_proposals(self, images, objectness, proposals):
         objectness_prob = torch.sigmoid(objectness)
-        filtered_scores, filtered_proposals = [], []
+        filtered_proposals = []
         for img, objectness_prob_per_img, proposals_per_img in zip(images, objectness_prob, proposals):
             # clip to image size
             proposals_per_img = torchvision.ops.clip_boxes_to_image(proposals_per_img, tuple(img.shape[-2:]))
@@ -155,14 +156,16 @@ class RegionProposalNetwork(nn.Module):
             keep_idx = torchvision.ops.remove_small_boxes(proposals_per_img, self.min_size)
             objectness_prob_per_img, proposals_per_img = objectness_prob_per_img[keep_idx], proposals_per_img[keep_idx]
 
-            # NMS & top-n
+            # NMS
             keep_idx = torchvision.ops.nms(proposals_per_img, objectness_prob_per_img, self.nms_thresh)
-            keep_idx = keep_idx[:self.top_n()]
             objectness_prob_per_img, proposals_per_img = objectness_prob_per_img[keep_idx], proposals_per_img[keep_idx]
             
-            filtered_scores.append(objectness_prob_per_img)
+            # sort by objectness and select top-n
+            top_idx = torch.argsort(objectness_prob_per_img, descending=True)[:self.top_n()]
+            proposals_per_img = proposals_per_img[top_idx]
+            
             filtered_proposals.append(proposals_per_img)
-        return torch.stack(filtered_scores, dim=0), torch.stack(filtered_proposals, dim=0)
+        return torch.stack(filtered_proposals, dim=0)
 
     def forward(self, images, features, gt_labels=None, gt_bboxs=None):
         anchors = self.anchor_generator(features.detach())
@@ -170,7 +173,7 @@ class RegionProposalNetwork(nn.Module):
         objectness, pred_bbox_deltas = self.convert(objectness, pred_bbox_deltas)
         
         proposals = self.box_coder.decode(pred_bbox_deltas.detach(), anchors)
-        filtered_scores, filtered_proposals = self.filter_proposals(images, objectness.detach(), proposals)
+        filtered_proposals = self.filter_proposals(images, objectness.detach(), proposals)
         
         rpn_cls_loss, rpn_loc_loss = None, None
         if self.training:

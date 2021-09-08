@@ -50,7 +50,8 @@ class FastRCNN(nn.Module):
                  bbox_reg_weights,
                  iou_positive_thresh, iou_negative_high, iou_negative_low,
                  batch_size_per_image, positive_fraction,
-                 nms_thresh, score_thresh, detections_per_img):
+                 min_size, nms_thresh, 
+                 score_thresh, top_n):
         super(FastRCNN, self).__init__()
         self.roi_head = roi_head
         self.num_classes = roi_head.num_classes
@@ -59,10 +60,10 @@ class FastRCNN(nn.Module):
         self.proposal_matcher = utils.Matcher(iou_positive_thresh, iou_negative_high, iou_negative_low, low_quality_match=False)
         self.sampler = utils.Balanced_Sampler(batch_size_per_image, positive_fraction)
         
+        self.min_size = min_size
         self.nms_thresh = nms_thresh
         self.score_thresh = score_thresh
-        self.detections_per_img = detections_per_img
-        self.min_size = 0.01
+        self.top_n = top_n
 
     def assign_gt_to_proposals(self, proposals, gt_labels, gt_bboxs):
         labels, matched_gt_bboxs = [], []
@@ -156,18 +157,24 @@ class FastRCNN(nn.Module):
                                                                   labels_per_img[keep_idx], 
                                                                   detections_per_img[keep_idx])
             
-            # NMS & top-n
+            # NMS
             keep_idx = torchvision.ops.batched_nms(detections_per_img, scores_per_img, labels_per_img, self.nms_thresh)
-            keep_idx = keep_idx[:self.detections_per_img]
             scores_per_img, labels_per_img, detections_per_img = (scores_per_img[keep_idx], 
                                                                   labels_per_img[keep_idx], 
                                                                   detections_per_img[keep_idx])
+            
+            # sort by scores and select top-n
+            top_idx = torch.argsort(scores_per_img, descending=True)[:self.top_n]
+            scores_per_img, labels_per_img, detections_per_img = (scores_per_img[top_idx], 
+                                                                  labels_per_img[top_idx], 
+                                                                  detections_per_img[top_idx])
 
             filtered_scores.append(scores_per_img)
             filtered_labels.append(labels_per_img)
             filtered_detections.append(detections_per_img)
             
-        filtered_scores, filtered_labels = torch.stack(filtered_scores, dim=0), torch.stack(filtered_labels, dim=0)
+        filtered_scores = torch.stack(filtered_scores, dim=0)
+        filtered_labels = torch.stack(filtered_labels, dim=0)
         filtered_detections = torch.stack(filtered_detections, dim=0)
         return filtered_scores, filtered_labels, filtered_detections
     
